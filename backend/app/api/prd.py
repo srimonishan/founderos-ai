@@ -8,67 +8,74 @@ Endpoint:
 
 Request body (JSON):
     {
-        "startup_idea":    "...",     # required, 10-2000 chars
-        "target_audience": "...",     # required, 3-500 chars
-        "industry":        "..."      # required, 2-100 chars
+        "startup_idea":    "...",    # required, 10-2000 chars
+        "target_audience": "...",    # required, 3-500 chars
+        "industry":        "...",    # required, 2-100 chars
+        "project_id":      "...",    # optional — link the PRD to an existing project
+        "project_name":    "..."     # optional — name to use when auto-creating the project
     }
 
-Returns a fully structured PRD (see PRDOutput schema).
+Authentication (optional but recommended for persistence):
+    Authorization: Bearer <supabase-jwt>
+    OR
+    X-User-Id: <uuid>
+
+Returns the structured PRD plus persistence metadata
+(generation_id, project_id, persisted flag).
 """
 
 import logging
+from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from app.core.config import settings
+from app.core.auth import get_current_user_id
 from app.models.generation import PRDOutput
 from app.services.openai_service import (
-    OpenAIService,
-    OpenAINotConfiguredError,
     OpenAIInvalidResponseError,
+    OpenAINotConfiguredError,
     OpenAIServiceError,
 )
+from app.services.prd_service import PRDService
 
 logger = logging.getLogger(__name__)
-
 router = APIRouter(tags=["PRD"])
 
 
-# ── Request / Response models (route-local) ───────────────────────────────────
+# ── Request / Response models ────────────────────────────────────────────────
 
 class GeneratePRDRequest(BaseModel):
     """Body schema for POST /generate-prd."""
 
-    startup_idea: str = Field(
-        ...,
-        min_length=10,
-        max_length=2000,
-        description="One-paragraph description of the startup idea",
+    startup_idea: str = Field(..., min_length=10, max_length=2000,
+                              description="One-paragraph description of the startup idea")
+    target_audience: str = Field(..., min_length=3, max_length=500,
+                                 description="Who the product is for")
+    industry: str = Field(..., min_length=2, max_length=100,
+                          description="Industry or vertical")
+
+    # Optional persistence hints
+    project_id: Optional[str] = Field(
+        None, description="Existing project ID to attach this PRD to. "
+                          "If omitted, a new project is created automatically."
     )
-    target_audience: str = Field(
-        ...,
-        min_length=3,
-        max_length=500,
-        description="Who the product is for (e.g. 'Solo founders in B2B SaaS')",
-    )
-    industry: str = Field(
-        ...,
-        min_length=2,
-        max_length=100,
-        description="Industry or vertical (e.g. 'FinTech', 'Developer Tools')",
+    project_name: Optional[str] = Field(
+        None, max_length=120,
+        description="Name for the auto-created project (ignored if project_id is set)."
     )
 
     model_config = {
         "json_schema_extra": {
             "example": {
                 "startup_idea": (
-                    "AI-powered platform that helps early-stage founders generate PRDs, "
-                    "roadmaps, and architecture plans in minutes instead of weeks."
+                    "AI-powered platform that helps early-stage founders generate "
+                    "PRDs, roadmaps, and architecture plans in minutes instead of weeks."
                 ),
                 "target_audience": "Solo founders and 1-10 person startup teams",
                 "industry": "SaaS / Developer Tools",
+                "project_name": "FounderOS AI",
             }
         }
     }
@@ -78,12 +85,29 @@ class GeneratePRDResponse(BaseModel):
     """Envelope returned by POST /generate-prd."""
 
     success: bool = True
+    prd: PRDOutput
+    model: str
+
+    # Echo of the inputs for client convenience
     startup_idea: str
     target_audience: str
     industry: str
-    prd: PRDOutput
-    model: str
+
+    # Persistence metadata
+    persisted: bool = False
+    user_id: Optional[str] = None
+    project_id: Optional[str] = None
     generation_id: Optional[str] = None
+    created_at: Optional[datetime] = None
+    warnings: list[str] = []
+    persistence_error: Optional[str] = None
+
+
+# ── Dependency injection ─────────────────────────────────────────────────────
+
+def get_prd_service() -> PRDService:
+    """Factory for the PRD orchestration service. Easy to override in tests."""
+    return PRDService()
 
 
 # ── Route ─────────────────────────────────────────────────────────────────────
@@ -91,11 +115,12 @@ class GeneratePRDResponse(BaseModel):
 @router.post(
     "/generate-prd",
     response_model=GeneratePRDResponse,
-    summary="Generate a structured Product Requirements Document",
+    summary="Generate and persist a structured Product Requirements Document",
     description=(
-        "Uses GPT-4o (with gpt-4o-mini fallback) to produce a fully structured PRD "
-        "including startup summary, core features, monetization strategy, and roadmap. "
-        "Output is validated against a strict Pydantic schema."
+        "Generates a PRD via OpenAI and, when an authenticated user is present, "
+        "auto-creates a startup project and persists the PRD to Supabase. "
+        "Persistence is best-effort — the PRD is always returned even if the "
+        "database write fails."
     ),
     responses={
         200: {"description": "PRD generated successfully"},
@@ -105,53 +130,46 @@ class GeneratePRDResponse(BaseModel):
         500: {"description": "Unexpected server error"},
     },
 )
-async def generate_prd(request: GeneratePRDRequest) -> GeneratePRDResponse:
-    """Generate a structured PRD from a startup idea, target audience, and industry."""
+async def generate_prd(
+    request: GeneratePRDRequest,
+    service: PRDService = Depends(get_prd_service),
+    user_id: Optional[str] = Depends(get_current_user_id),
+) -> GeneratePRDResponse:
+    """Generate a structured PRD and (best-effort) persist it for the user."""
     logger.info(
         f"POST /generate-prd — industry={request.industry!r}, "
-        f"audience={request.target_audience[:60]!r}"
+        f"user_id={user_id or 'anonymous'}, project_id={request.project_id or 'auto'}"
     )
 
-    service = OpenAIService()
-
     try:
-        prd = await service.generate_prd(
+        result = await service.generate_and_persist(
             startup_idea=request.startup_idea,
             target_audience=request.target_audience,
             industry=request.industry,
+            user_id=user_id,
+            project_id=request.project_id,
+            project_name=request.project_name,
         )
 
     except OpenAINotConfiguredError as exc:
-        logger.error(f"OpenAI not configured: {exc}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={
-                "error": "openai_not_configured",
-                "message": str(exc),
-            },
+            detail={"error": "openai_not_configured", "message": str(exc)},
         )
-
     except OpenAIInvalidResponseError as exc:
-        logger.error(f"Invalid PRD response from model: {exc}")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail={
                 "error": "invalid_model_response",
-                "message": "The AI model returned an invalid or malformed response.",
+                "message": "The AI model returned an invalid response.",
                 "details": str(exc),
             },
         )
-
     except OpenAIServiceError as exc:
-        logger.error(f"OpenAI service error: {exc}")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail={
-                "error": "openai_service_error",
-                "message": str(exc),
-            },
+            detail={"error": "openai_service_error", "message": str(exc)},
         )
-
     except Exception as exc:
         logger.exception("Unexpected error generating PRD")
         raise HTTPException(
@@ -162,16 +180,17 @@ async def generate_prd(request: GeneratePRDRequest) -> GeneratePRDResponse:
             },
         )
 
-    logger.info(
-        f"PRD generated — features={len(prd.core_features)}, "
-        f"tiers={len(prd.monetization_strategy.pricing_tiers)}, "
-        f"phases={len(prd.roadmap_overview)}"
-    )
-
     return GeneratePRDResponse(
+        prd=result.prd,
+        model=result.model,
         startup_idea=request.startup_idea,
         target_audience=request.target_audience,
         industry=request.industry,
-        prd=prd,
-        model=settings.OPENAI_MODEL,
+        persisted=result.persisted,
+        user_id=result.user_id,
+        project_id=result.project_id,
+        generation_id=result.generation_id,
+        created_at=result.created_at,
+        warnings=result.warnings,
+        persistence_error=result.persistence_error,
     )
