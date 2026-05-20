@@ -18,6 +18,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.v1.router import api_router
+from app.api.prd import router as prd_router
 from app.core.config import settings
 from app.core.errors import (
     http_exception_handler,
@@ -136,6 +137,8 @@ def _register_exception_handlers(app: FastAPI) -> None:
 def _register_routers(app: FastAPI) -> None:
     # Versioned API
     app.include_router(api_router, prefix="/api/v1")
+    # Standalone PRD route at the root: POST /generate-prd
+    app.include_router(prd_router)
 
 
 # ── Health endpoints ──────────────────────────────────────────────────────────
