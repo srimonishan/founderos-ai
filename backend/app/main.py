@@ -86,16 +86,23 @@ def _register_middleware(app: FastAPI) -> None:
     # 1. Gzip compression for large AI-generated responses
     app.add_middleware(GZipMiddleware, minimum_size=1000)
 
-    # 2. CORS — explicitly includes localhost and all Replit domains
+    # 2. CORS — production-ready: explicit origins + tightly-scoped regex
+    #    (Replit prod/dev, Vercel previews, optional FRONTEND_URL, EXTRA_CORS_ORIGINS).
+    cors = settings.cors
+    logger.info(
+        f"CORS: {len(cors.allow_origins)} origin(s), "
+        f"regex={'on' if cors.allow_origin_regex else 'off'}, "
+        f"credentials={cors.allow_credentials}"
+    )
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.CORS_ORIGINS,
-        allow_origin_regex=r"https://.*\.(replit\.dev|replit\.app|repl\.co)$",
-        allow_credentials=True,
-        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type", "Accept", "X-Request-ID"],
-        expose_headers=["X-Request-ID", "X-Response-Time"],
-        max_age=600,
+        allow_origins=cors.allow_origins,
+        allow_origin_regex=cors.allow_origin_regex,
+        allow_credentials=cors.allow_credentials,
+        allow_methods=cors.allow_methods,
+        allow_headers=cors.allow_headers,
+        expose_headers=cors.expose_headers,
+        max_age=cors.max_age,
     )
 
     # 3. Trusted hosts (permissive for Replit's proxied environment)
@@ -206,7 +213,7 @@ async def info() -> dict:
         "supabase": {
             "configured": settings.is_supabase_configured,
         },
-        "cors_origins_count": len(settings.CORS_ORIGINS),
+        "cors": settings.cors.summary(),
         "docs_enabled": settings.docs_enabled,
     }
 

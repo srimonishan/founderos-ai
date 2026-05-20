@@ -20,6 +20,8 @@ from dotenv import load_dotenv
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.core.cors import CORSConfig, build_cors_config
+
 
 # ── .env loading ──────────────────────────────────────────────────────────────
 # Resolve project paths so this works no matter the current working directory.
@@ -31,49 +33,6 @@ ENV_FILE = BASE_DIR / ".env"
 # Secrets, container env, CI variables) always win over the file.
 if ENV_FILE.exists():
     load_dotenv(dotenv_path=ENV_FILE, override=False)
-
-
-# ── CORS origin builder ───────────────────────────────────────────────────────
-
-def _build_cors_origins() -> List[str]:
-    """Build the allowed CORS origins list, including Replit + localhost."""
-    origins: List[str] = [
-        "http://localhost",
-        "http://localhost:3000",
-        "http://localhost:5173",
-        "http://localhost:8000",
-        "http://localhost:8080",
-        "http://localhost:19291",
-        "https://localhost",
-        "https://localhost:3000",
-        "https://localhost:5173",
-    ]
-
-    replit_domains = os.environ.get("REPLIT_DOMAINS", "")
-    for domain in replit_domains.split(","):
-        domain = domain.strip()
-        if domain:
-            origins.append(f"https://{domain}")
-            origins.append(f"http://{domain}")
-
-    replit_dev_domain = os.environ.get("REPLIT_DEV_DOMAIN", "")
-    if replit_dev_domain:
-        origins.append(f"https://{replit_dev_domain}")
-
-    # Wildcard catch-alls for Replit's three TLDs (also matched by regex in main.py)
-    origins.extend([
-        "https://*.replit.dev",
-        "https://*.replit.app",
-        "https://*.repl.co",
-    ])
-
-    extra = os.environ.get("EXTRA_CORS_ORIGINS", "")
-    for origin in extra.split(","):
-        origin = origin.strip()
-        if origin:
-            origins.append(origin)
-
-    return list(dict.fromkeys(origins))   # dedupe, preserve order
 
 
 # ── Settings ──────────────────────────────────────────────────────────────────
@@ -104,7 +63,10 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "change-me-in-production"
 
     # ── CORS ──────────────────────────────────────────────────────────────────
+    # Concrete origin allow-list (auto-populated in `model_post_init`).
     CORS_ORIGINS: List[str] = []
+    # Production primary frontend URL (e.g. https://app.founderos.ai).
+    FRONTEND_URL: str = ""
 
     # ── OpenAI ────────────────────────────────────────────────────────────────
     OPENAI_API_KEY: str = ""
@@ -129,15 +91,25 @@ class Settings(BaseSettings):
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     def model_post_init(self, __context) -> None:
-        # Auto-build CORS origins on startup
-        if not self.CORS_ORIGINS:
-            object.__setattr__(self, "CORS_ORIGINS", _build_cors_origins())
+        # Auto-build the resolved CORS config (origins + regex) on startup
+        cors = build_cors_config(
+            environment=self.ENVIRONMENT,
+            frontend_url=self.FRONTEND_URL or None,
+            extra_origins=self.CORS_ORIGINS or None,
+        )
+        object.__setattr__(self, "_cors_config", cors)
+        object.__setattr__(self, "CORS_ORIGINS", cors.allow_origins)
 
         # Reconcile the two Supabase service-key names so callers can use either
         if not self.SUPABASE_SERVICE_KEY and self.SUPABASE_SERVICE_ROLE_KEY:
             object.__setattr__(self, "SUPABASE_SERVICE_KEY", self.SUPABASE_SERVICE_ROLE_KEY)
         if not self.SUPABASE_SERVICE_ROLE_KEY and self.SUPABASE_SERVICE_KEY:
             object.__setattr__(self, "SUPABASE_SERVICE_ROLE_KEY", self.SUPABASE_SERVICE_KEY)
+
+    @property
+    def cors(self) -> CORSConfig:
+        """Resolved CORS configuration. Built once in `model_post_init`."""
+        return self._cors_config
 
     # ── Validators ────────────────────────────────────────────────────────────
 
@@ -194,7 +166,7 @@ class Settings(BaseSettings):
             "openai_model": self.OPENAI_MODEL,
             "supabase_configured": self.is_supabase_configured,
             "supabase_service_key_configured": self.has_supabase_service_key,
-            "cors_origin_count": len(self.CORS_ORIGINS),
+            "cors": self.cors.summary(),
         }
 
 
