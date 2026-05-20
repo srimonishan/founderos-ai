@@ -1,0 +1,12 @@
+kind = "api"
+previewPath = "/v1"
+title = "FounderOS AI — FastAPI"
+version = "1.0.0"
+
+[[services]]
+localPort = 8090
+name = "FastAPI Server"
+paths = ["/v1"]
+
+[services.development]
+run = "python -m uvicorn main:app --host 0.0.0.0 --port 8090 --reload --app-dir artifacts/fastapi-server"
