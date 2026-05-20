@@ -18,6 +18,7 @@ from typing import List, Optional
 from fastapi import APIRouter, FastAPI
 
 # ── Import all feature routers here ──────────────────────────────────────────
+from app.api.architecture import router as architecture_router
 from app.api.prd import router as prd_router
 from app.api.roadmap import router as roadmap_router
 from app.api.v1.router import api_router as v1_router
@@ -49,6 +50,11 @@ ROUTERS: List[RouterMount] = [
         router=roadmap_router,
         prefix="",
         description="Standalone Roadmap endpoint at /generate-roadmap",
+    ),
+    RouterMount(
+        router=architecture_router,
+        prefix="",
+        description="Standalone Architecture endpoint at /generate-architecture",
     ),
 ]
 

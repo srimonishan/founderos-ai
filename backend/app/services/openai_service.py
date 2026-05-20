@@ -26,6 +26,7 @@ from openai import AsyncOpenAI, APIError, APITimeoutError, RateLimitError
 from pydantic import BaseModel, ValidationError
 
 from app.core.config import settings
+from app.models.architecture import ArchitectureOutput
 from app.models.generation import PRDOutput
 from app.models.roadmap import RoadmapOutput
 
@@ -288,6 +289,78 @@ class OpenAIService:
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             schema=RoadmapOutput,
+        )
+
+    async def generate_structured_architecture(
+        self,
+        startup_idea: str,
+        target_audience: str,
+        industry: str,
+        expected_scale: str = "mvp",
+        preferred_stack: Optional[str] = None,
+    ) -> ArchitectureOutput:
+        """
+        Generate a fully structured software architecture plan as validated JSON.
+
+        Returns ArchitectureOutput with:
+          - frontend (framework, libs, key components, folder structure)
+          - backend (framework, services, background jobs, auth strategy)
+          - database (engine, tables with columns/indexes/relationships)
+          - api_plan (REST endpoints with methods, paths, request/response shapes)
+          - infrastructure (hosting, CDN, caching, observability, CI/CD)
+          - engineering_recommendations (prioritized)
+          - scalability_notes, security_notes
+        """
+        system_prompt = (
+            "You are a pragmatic principal engineer who has shipped many production SaaS "
+            "systems and bootstrapped startups. Recommend a realistic, modern stack that a "
+            "small team can build quickly and scale incrementally. Prefer boring, proven "
+            "technology over hype. Be concrete: name specific frameworks, libraries, and "
+            "patterns. Avoid over-engineering for an MVP."
+        )
+
+        stack_hint = (
+            f"\nPreferred stack hint from the user: {preferred_stack}"
+            if preferred_stack else ""
+        )
+
+        user_prompt = (
+            f"Startup Idea:\n{startup_idea}\n\n"
+            f"Target Audience: {target_audience}\n"
+            f"Industry: {industry}\n"
+            f"Expected Scale: {expected_scale} "
+            f"(mvp = first 100 users; early-growth = 1k-10k; scale = 100k+)"
+            f"{stack_hint}\n\n"
+            "Generate the structured architecture. Include:\n"
+            "  - executive_summary: 2-3 sentence overview\n"
+            "  - frontend: framework, language, styling, state_management, routing, "
+            "key_libraries, folder_structure (top-level), 4-8 key_components (with type "
+            "= page|feature|shared-ui|layout), rationale\n"
+            "  - backend: framework, language, runtime, pattern, key_libraries, "
+            "3-6 services (each with name, responsibility, type), background_jobs, "
+            "auth_strategy, rationale\n"
+            "  - database: engine, orm, 3-8 tables (each with name, purpose, "
+            "columns [name/type/nullable/description], indexes, relationships), "
+            "migration_strategy, backup_strategy, rationale\n"
+            "  - api_plan: style (REST), base_url, 6-12 endpoints (each with method, "
+            "path, summary, auth_required, request_shape, response_shape), "
+            "versioning_strategy, error_format\n"
+            "  - infrastructure: hosting, cdn, caching_strategy, observability, ci_cd\n"
+            "  - engineering_recommendations: 4-7 items across observability, testing, "
+            "deployment, security, performance (each with priority: core|important|optional)\n"
+            "  - scalability_notes: how this scales from MVP to growth\n"
+            "  - security_notes: key security considerations"
+        )
+
+        logger.info(
+            f"Generating structured architecture — industry={industry!r}, "
+            f"scale={expected_scale!r}"
+        )
+
+        return await self.complete_json(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            schema=ArchitectureOutput,
         )
 
     async def generate_roadmap(
