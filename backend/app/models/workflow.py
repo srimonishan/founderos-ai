@@ -71,7 +71,7 @@ class FullStartupAnalysisResponse(BaseModel):
     success: bool = True
     run_id: str
     idea_title: str
-    prd: str
+    prd: Dict[str, Any]   # structured PRDOutput as a dict
     roadmap: str
     architecture: str
     workflow_run: WorkflowRun

@@ -1,3 +1,4 @@
+import json
 import logging
 from typing import Optional
 
@@ -14,29 +15,34 @@ logger = logging.getLogger(__name__)
 
 
 class GenerationService:
-    """Orchestrates AI generation requests end-to-end."""
+    """Orchestrates AI generation requests end-to-end (call OpenAI + persist to DB)."""
 
     def __init__(self):
         self.openai = OpenAIService()
         self.supabase = SupabaseService()
 
     async def generate_prd(self, request: PRDRequest) -> PRDResponse:
-        logger.info(f"Generating PRD for: {request.idea_title}")
+        logger.info(f"Generating PRD for industry='{request.industry}'")
 
-        content = await self.openai.generate_prd(
-            idea_title=request.idea_title,
-            description=request.description,
-            target_market=request.target_market,
-            problem_statement=request.problem_statement,
+        prd = await self.openai.generate_prd(
+            startup_idea=request.startup_idea,
+            target_audience=request.target_audience,
+            industry=request.industry,
         )
 
+        # Persist as JSON so we can re-render the structured output later
         generation_id = await self._persist(
-            "prd", request.model_dump(exclude={"user_id"}), content, request.user_id
+            "prd",
+            request.model_dump(exclude={"user_id"}),
+            json.dumps(prd.model_dump(), indent=2),
+            request.user_id,
         )
 
         return PRDResponse(
-            idea_title=request.idea_title,
-            prd_content=content,
+            startup_idea=request.startup_idea,
+            target_audience=request.target_audience,
+            industry=request.industry,
+            prd=prd,
             model=settings.OPENAI_MODEL,
             generation_id=generation_id,
         )

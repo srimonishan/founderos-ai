@@ -1,8 +1,9 @@
 import asyncio
+import json
 import logging
 from typing import Any, Dict
 
-from app.models.workflow import FullStartupAnalysisRequest, FullStartupAnalysisResponse
+from app.models.workflow import FullStartupAnalysisRequest
 from app.services.openai_service import OpenAIService
 from app.services.supabase_service import SupabaseService
 from app.core.config import settings
@@ -16,9 +17,9 @@ class StartupAnalysisWorkflow(BaseWorkflow):
     Full startup analysis workflow.
 
     Steps:
-      1. Generate PRD
-      2. Generate Roadmap  (parallel with step 3)
-      3. Generate Architecture  (parallel with step 2)
+      1. Generate structured PRD (JSON)
+      2. Generate Roadmap         (parallel with step 3)
+      3. Generate Architecture    (parallel with step 2)
       4. Persist all results to Supabase
     """
 
@@ -32,14 +33,13 @@ class StartupAnalysisWorkflow(BaseWorkflow):
     async def run_steps(self, input_data: Dict[str, Any]) -> None:
         request = FullStartupAnalysisRequest(**input_data)
 
-        # Step 1 — PRD (must come first; roadmap and architecture can reference it)
-        prd = await self.run_step(
-            "prd", "Generate Product Requirements Document",
+        # Step 1 — Structured PRD
+        prd_output = await self.run_step(
+            "prd", "Generate Structured PRD",
             self.openai.generate_prd(
-                idea_title=request.idea_title,
-                description=request.description,
-                target_market=request.target_market,
-                problem_statement=request.problem_statement,
+                startup_idea=f"{request.idea_title}. {request.description}",
+                target_audience=request.target_market,
+                industry=getattr(request, "industry", "SaaS"),
             ),
         )
 
@@ -65,14 +65,15 @@ class StartupAnalysisWorkflow(BaseWorkflow):
             ),
         )
 
-        # Step 4 — Persist (fire-and-forget, non-blocking)
+        # Step 4 — Persist
+        prd_json = json.dumps(prd_output.model_dump(), indent=2)
         await self.run_step(
             "persist", "Save results to database",
-            self._persist_all(request, prd, roadmap, architecture),
+            self._persist_all(request, prd_json, roadmap, architecture),
         )
 
         self.run.output_data = {
-            "prd": prd,
+            "prd": prd_output.model_dump(),
             "roadmap": roadmap,
             "architecture": architecture,
         }
@@ -80,7 +81,7 @@ class StartupAnalysisWorkflow(BaseWorkflow):
     async def _persist_all(
         self,
         request: FullStartupAnalysisRequest,
-        prd: str,
+        prd_json: str,
         roadmap: str,
         architecture: str,
     ) -> None:
@@ -93,7 +94,7 @@ class StartupAnalysisWorkflow(BaseWorkflow):
         }
 
         await asyncio.gather(
-            self.supabase.save_generation("prd", base_input, prd, request.user_id, self.run_id),
+            self.supabase.save_generation("prd", base_input, prd_json, request.user_id, self.run_id),
             self.supabase.save_generation("roadmap", base_input, roadmap, request.user_id, self.run_id),
             self.supabase.save_generation("architecture", base_input, architecture, request.user_id, self.run_id),
         )
