@@ -146,76 +146,9 @@ def _register_routers(app: FastAPI) -> None:
     register_routers(app)
 
 
-# ── Health endpoints ──────────────────────────────────────────────────────────
-
-def _register_health(app: FastAPI) -> None:
-    """Registered separately so health routes are never blocked by auth middleware."""
-    pass
-
-
 # Instantiate the app
+# (Health endpoints are mounted via the router registry in app/api/__init__.py)
 app = create_app()
-
-
-@app.get("/health", tags=["Health"], summary="Liveness check")
-async def health() -> dict:
-    """
-    Lightweight liveness probe — returns immediately.
-    Use this for load-balancer and container health checks.
-    """
-    return {"status": "ok", "app": settings.APP_NAME, "version": settings.APP_VERSION}
-
-
-@app.get("/health/ready", tags=["Health"], summary="Readiness check")
-async def ready() -> dict:
-    """
-    Readiness probe — confirms all downstream integrations are configured.
-    Returns HTTP 503 if a required service is unavailable.
-    """
-    issues = []
-    if not settings.is_openai_configured:
-        issues.append("OPENAI_API_KEY not set")
-    if not settings.is_supabase_configured:
-        issues.append("SUPABASE_URL / SUPABASE_ANON_KEY not set")
-
-    if issues:
-        from fastapi import HTTPException, status
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"status": "not_ready", "issues": issues},
-        )
-
-    return {
-        "status": "ready",
-        "app": settings.APP_NAME,
-        "version": settings.APP_VERSION,
-        "environment": settings.ENVIRONMENT,
-        "integrations": {
-            "openai": {"configured": True, "model": settings.OPENAI_MODEL},
-            "supabase": {"configured": True, "url": settings.SUPABASE_URL},
-        },
-    }
-
-
-@app.get("/health/info", tags=["Health"], summary="Full diagnostic info")
-async def info() -> dict:
-    """Detailed runtime information — disable in production if sensitive."""
-    return {
-        "app": settings.APP_NAME,
-        "version": settings.APP_VERSION,
-        "environment": settings.ENVIRONMENT,
-        "debug": settings.DEBUG,
-        "openai": {
-            "configured": settings.is_openai_configured,
-            "model": settings.OPENAI_MODEL,
-            "fallback_model": settings.OPENAI_FALLBACK_MODEL,
-        },
-        "supabase": {
-            "configured": settings.is_supabase_configured,
-        },
-        "cors": settings.cors.summary(),
-        "docs_enabled": settings.docs_enabled,
-    }
 
 
 # ── Dev entry point ───────────────────────────────────────────────────────────

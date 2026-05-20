@@ -19,6 +19,7 @@ from fastapi import APIRouter, FastAPI
 
 # ── Import all feature routers here ──────────────────────────────────────────
 from app.api.architecture import router as architecture_router
+from app.api.health import router as health_router
 from app.api.prd import router as prd_router
 from app.api.roadmap import router as roadmap_router
 from app.api.v1.router import api_router as v1_router
@@ -36,6 +37,11 @@ class RouterMount:
 # ── Mount table ──────────────────────────────────────────────────────────────
 # Order is preserved in the registration log. Most-specific prefixes first.
 ROUTERS: List[RouterMount] = [
+    RouterMount(
+        router=health_router,
+        prefix="",
+        description="Health, liveness, readiness, and diagnostic info endpoints",
+    ),
     RouterMount(
         router=v1_router,
         prefix="/api/v1",
