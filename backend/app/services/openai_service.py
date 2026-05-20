@@ -27,6 +27,7 @@ from pydantic import BaseModel, ValidationError
 
 from app.core.config import settings
 from app.models.generation import PRDOutput
+from app.models.roadmap import RoadmapOutput
 
 logger = logging.getLogger(__name__)
 
@@ -223,6 +224,70 @@ class OpenAIService:
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             schema=PRDOutput,
+        )
+
+    async def generate_structured_roadmap(
+        self,
+        startup_idea: str,
+        target_audience: str,
+        industry: str,
+        timeline_weeks: int = 24,
+        team_size: int = 3,
+        sprint_length_weeks: int = 2,
+    ) -> RoadmapOutput:
+        """
+        Generate a fully structured startup roadmap as validated JSON.
+
+        Returns RoadmapOutput with:
+          - executive_summary
+          - milestones (with priority, owner, success metric)
+          - sprint_roadmap (sprint-by-sprint plan)
+          - mvp_phases (discovery → design → build → beta → launch → scale)
+          - execution_timeline (calendar-style)
+          - total_duration_weeks
+          - risk_summary
+        """
+        n_sprints = max(2, timeline_weeks // max(1, sprint_length_weeks))
+
+        system_prompt = (
+            "You are an experienced startup chief of staff and execution coach who has "
+            "shipped many early-stage SaaS products. Generate a realistic, actionable "
+            "roadmap that a small team can actually execute. Be specific with dates "
+            "(use 'Week N' / 'Month N' style), realistic with scope, and honest about risks."
+        )
+
+        user_prompt = (
+            f"Startup Idea:\n{startup_idea}\n\n"
+            f"Target Audience: {target_audience}\n"
+            f"Industry: {industry}\n"
+            f"Total Timeline: {timeline_weeks} weeks\n"
+            f"Team Size: {team_size} people\n"
+            f"Sprint Length: {sprint_length_weeks} weeks (~{n_sprints} sprints)\n\n"
+            "Generate the structured roadmap. Include:\n"
+            "  - executive_summary: 2-3 sentence overview of the plan\n"
+            "  - milestones: 5-8 major milestones across the full timeline, each with "
+            "name, description, target_date (e.g. 'Week 4'), priority (critical|high|medium|low), "
+            "owner, success_metric\n"
+            f"  - sprint_roadmap: ~{n_sprints} sprints, each with sprint_number, name, "
+            "duration_weeks, 2-5 goals, 2-4 deliverables, and any risks\n"
+            "  - mvp_phases: 3-5 phases drawn from "
+            "(discovery|design|build|beta|launch|scale) with timeline, objectives, "
+            "key_features, exit_criteria\n"
+            "  - execution_timeline: 4-8 timeline entries (e.g. 'Week 1-2', 'Month 2'), "
+            "each with focus and key_outcomes\n"
+            f"  - total_duration_weeks: {timeline_weeks}\n"
+            "  - risk_summary: cross-cutting risks and mitigations"
+        )
+
+        logger.info(
+            f"Generating structured roadmap — industry={industry!r}, "
+            f"timeline={timeline_weeks}w, sprints={n_sprints}, team={team_size}"
+        )
+
+        return await self.complete_json(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            schema=RoadmapOutput,
         )
 
     async def generate_roadmap(

@@ -19,6 +19,7 @@ from fastapi import APIRouter, FastAPI
 
 # ── Import all feature routers here ──────────────────────────────────────────
 from app.api.prd import router as prd_router
+from app.api.roadmap import router as roadmap_router
 from app.api.v1.router import api_router as v1_router
 
 
@@ -43,6 +44,11 @@ ROUTERS: List[RouterMount] = [
         router=prd_router,
         prefix="",
         description="Standalone PRD endpoint at /generate-prd",
+    ),
+    RouterMount(
+        router=roadmap_router,
+        prefix="",
+        description="Standalone Roadmap endpoint at /generate-roadmap",
     ),
 ]
 
